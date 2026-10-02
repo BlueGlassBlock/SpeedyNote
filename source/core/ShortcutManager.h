@@ -56,6 +56,18 @@ public:
         PagedOnly,    ///< Only applies to paged documents
         EdgelessOnly  ///< Only applies to edgeless documents
     };
+
+    /**
+     * @brief How a tool shortcut applies.
+     *
+     * Trigger switches to the tool and stays there. Hold switches for as long
+     * as the key is down, then restores the previous tool. Only the seven
+     * tool-switch actions support this; everything else is Trigger.
+     */
+    enum class Activation {
+        Trigger,  ///< Switch to the tool and stay there
+        Hold      ///< Switch while the key is down, then restore the previous tool
+    };
     
     /**
      * @brief Register an action with its default shortcut.
@@ -104,6 +116,67 @@ public:
      * @brief Check if the action has a user override.
      */
     bool isUserOverridden(const QString& actionId) const;
+
+    // ========== Tool shortcut activation (tap vs hold) ==========
+
+    /**
+     * @brief Whether a tool shortcut can be Tap or Hold.
+     *
+     * True for the seven tool-switch actions: pen, marker, eraser, lasso,
+     * highlighter, object select, and pan.
+     * @param actionId Registry id, e.g. "tool.eraser".
+     */
+    static bool supportsActivation(const QString& actionId);
+
+    /**
+     * @brief Default activation for a tool action.
+     *
+     * Pan is Hold. Every other supported tool is Trigger. Unsupported
+     * actions also report Trigger.
+     * @param actionId Registry id.
+     */
+    static Activation defaultActivationForAction(const QString& actionId);
+
+    /**
+     * @brief Effective activation, including a user override.
+     * @param actionId Registry id.
+     */
+    Activation activationForAction(const QString& actionId) const;
+
+    /**
+     * @brief Whether the user picked an activation other than the default.
+     * @param actionId Registry id.
+     */
+    bool isActivationOverridden(const QString& actionId) const;
+
+    /**
+     * @brief Set Tap or Hold for a tool action.
+     *
+     * No-op for actions that do not support activation.
+     * Does NOT auto-save; call saveUserShortcuts().
+     * @param actionId Registry id.
+     * @param activation Trigger or Hold.
+     */
+    void setActivation(const QString& actionId, Activation activation);
+
+    /**
+     * @brief Tool-switch action whose current shortcut matches this key.
+     * @param key Qt key code.
+     * @param modifiers Modifiers held with the key. KeypadModifier is ignored.
+     * @return The action id, or empty if none match.
+     */
+    QString toolActionForKey(int key, Qt::KeyboardModifiers modifiers) const;
+
+    /**
+     * @brief Whether a stored shortcut is this single key combination.
+     *
+     * Empty and multi-key sequences never match.
+     * @param shortcut Shortcut string, e.g. "Ctrl+E".
+     * @param key Qt key code.
+     * @param modifiers Modifiers held with the key. KeypadModifier is ignored.
+     */
+    static bool shortcutMatchesKey(const QString& shortcut, int key,
+                                   Qt::KeyboardModifiers modifiers);
     
     // ========== User Customization ==========
     
@@ -279,7 +352,18 @@ private:
         Scope scope = Scope::Global;  ///< Document mode scope for conflict detection
         Qt::ShortcutContext context = Qt::WindowShortcut;  ///< MAC.1: shortcut context for the QAction (Q6.5.2)
         QAction* action = nullptr; ///< MAC.1: lazily-created QAction parented to ShortcutManager
+        bool activationOverridden = false; ///< User tap/hold differs from the default
+        Activation userActivation = Activation::Trigger; ///< Stored activation when overridden
     };
+
+    /**
+     * @brief Push the effective shortcut onto the action's QAction.
+     *
+     * Hold leaves the QAction shortcut empty so the key reaches the hold
+     * handler and text fields instead of QAction.
+     * @param actionId Registry id.
+     */
+    void syncActionShortcut(const QString& actionId);
     
     /**
      * @brief Check if two scopes can conflict.

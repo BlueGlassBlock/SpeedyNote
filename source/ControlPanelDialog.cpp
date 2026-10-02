@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QWheelEvent>
 #include <QSpacerItem>
 #include <QTableWidget>
 #include <QTreeWidget>
@@ -75,6 +76,22 @@ QString overrideDisplayName(const QString& code) {
     };
     return overrides.value(code);
 }
+
+/**
+ * @brief Combo box that does not take wheel events.
+ *
+ * A combo inside the shortcut tree must not eat wheel events. Otherwise
+ * scrolling the list changes Tap/Hold as the pointer passes over a row.
+ */
+class ActivationCombo : public QComboBox {
+public:
+    using QComboBox::QComboBox;
+protected:
+    /**
+     * @brief Ignore the wheel so the shortcut tree scrolls instead.
+     */
+    void wheelEvent(QWheelEvent* event) override { event->ignore(); }
+};
 
 QString buildDisplayName(const QString& code) {
     const QString override = overrideDisplayName(code);
@@ -1203,8 +1220,8 @@ void ControlPanelDialog::createShortcutsTab()
     
     // Tree widget for shortcuts (organized by category)
     shortcutsTree = new QTreeWidget(shortcutsTab);
-    shortcutsTree->setHeaderLabels({tr("Action"), tr("Shortcut"), tr("Default")});
-    shortcutsTree->setColumnCount(3);
+    shortcutsTree->setHeaderLabels({tr("Action"), tr("Shortcut"), tr("Default"), tr("Activation")});
+    shortcutsTree->setColumnCount(4);
     shortcutsTree->setRootIsDecorated(true);
     shortcutsTree->setAlternatingRowColors(true);
     shortcutsTree->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1213,6 +1230,7 @@ void ControlPanelDialog::createShortcutsTab()
     shortcutsTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     shortcutsTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     shortcutsTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    shortcutsTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     shortcutsTree->setMinimumWidth(350);
     
     // Connect double-click to edit
@@ -1339,13 +1357,32 @@ void ControlPanelDialog::updateShortcutDisplay(QTreeWidgetItem* item, const QStr
     } else {
         item->setToolTip(1, QString());
     }
+
+    if (!ShortcutManager::supportsActivation(actionId)) {
+        shortcutsTree->setItemWidget(item, 3, nullptr);
+        return;
+    }
+
+    auto* combo = new ActivationCombo(shortcutsTree);
+    combo->addItem(tr("Tap"), QStringLiteral("trigger"));
+    combo->addItem(tr("Hold"), QStringLiteral("hold"));
+    const bool hold = sm->activationForAction(actionId) == ShortcutManager::Activation::Hold;
+    combo->setCurrentIndex(hold ? 1 : 0);
+    connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [combo, actionId](int index) {
+        const auto chosen = combo->itemData(index).toString() == QLatin1String("hold")
+                                ? ShortcutManager::Activation::Hold
+                                : ShortcutManager::Activation::Trigger;
+        auto* mgr = ShortcutManager::instance();
+        mgr->setActivation(actionId, chosen);
+        mgr->saveUserShortcuts();
+    });
+    shortcutsTree->setItemWidget(item, 3, combo);
 }
 
 void ControlPanelDialog::onShortcutItemDoubleClicked(QTreeWidgetItem* item, int column)
 {
-    Q_UNUSED(column)
-    
-    if (!item) return;
+    if (!item || column == 3) return;
     
     QString actionId = item->data(0, Qt::UserRole).toString();
     if (actionId.isEmpty()) return;  // Category item
@@ -1418,13 +1455,20 @@ void ControlPanelDialog::onResetShortcut()
     
     ShortcutManager* sm = ShortcutManager::instance();
     
-    if (!sm->isUserOverridden(actionId)) {
+    const bool keyDefault = !sm->isUserOverridden(actionId);
+    const bool activationDefault = !sm->isActivationOverridden(actionId);
+    if (keyDefault && activationDefault) {
         QMessageBox::information(this, tr("Already Default"),
             tr("This shortcut is already using the default value."));
         return;
     }
-    
-    sm->clearUserShortcut(actionId);
+
+    if (!keyDefault) {
+        sm->clearUserShortcut(actionId);
+    }
+    if (!activationDefault) {
+        sm->setActivation(actionId, ShortcutManager::defaultActivationForAction(actionId));
+    }
     sm->saveUserShortcuts();
     
     // Update display

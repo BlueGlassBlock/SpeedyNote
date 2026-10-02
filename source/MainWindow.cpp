@@ -342,12 +342,13 @@ MainWindow::MainWindow(QWidget *parent)
             m_toolOverrideViewport = nullptr;
         }
         
-        // Clear pan hold when viewport changes - revert old viewport's tool
-        if (m_panHoldActive) {
+        // Revert a held tool on the viewport we are leaving.
+        if (m_toolHoldActive) {
             if (m_connectedViewport) {
-                m_connectedViewport->setCurrentTool(m_toolBeforePanHold);
+                m_connectedViewport->setCurrentTool(m_toolBeforeHold);
             }
-            m_panHoldActive = false;
+            m_toolHoldActive = false;
+            m_toolHoldKey = 0;
         }
         
         // Phase 6.1: Hide PDF search bar when switching tabs to prevent stale state
@@ -1203,7 +1204,7 @@ void MainWindow::setupUi() {
     
     // Connect Toolbar signals
     connect(m_toolbar, &Toolbar::toolSelected, this, [this](ToolType tool) {
-        if (m_panHoldActive) m_panHoldActive = false;
+        if (m_toolHoldActive) return;
         if (DocumentViewport* vp = currentViewport()) {
             if (m_toolOverrideViewport == vp)
                 m_toolOverrideViewport = nullptr;
@@ -1882,8 +1883,10 @@ void MainWindow::wireQActionDispatchers()
     };
     auto wireToolKey = [&wire, isTextFocused](const QString& id, ToolType tool) {
         wire(id, [tool, isTextFocused](MainWindow* w) {
+            // Hold owns the tool until the key is released. QAction still
+            // fires for Tap actions and for menu clicks.
+            if (w->m_toolHoldActive) return;
             if (isTextFocused()) return;
-            if (w->m_panHoldActive) w->m_panHoldActive = false;
             if (auto* vp = w->currentViewport()) {
                 if (w->m_toolOverrideViewport == vp)
                     w->m_toolOverrideViewport = nullptr;
@@ -1897,19 +1900,13 @@ void MainWindow::wireQActionDispatchers()
     wireToolKey("tool.eraser",        ToolType::Eraser);
     wireToolKey("tool.lasso",         ToolType::Lasso);
     wireToolKey("tool.object_select", ToolType::ObjectSelect);
-    // tool.pan (H) is intentionally NOT wired — it is hold-to-activate via
-    // the existing event-filter path (m_panHoldKey / changeEvent / eventFilter).
-    // Its registry shortcut is read once in setupManagedShortcuts() to seed
-    // m_panHoldKey; onShortcutChanged keeps it in sync after user remaps.
+    wireToolKey("tool.pan",           ToolType::Pan);
 
-    // Ensure `tool` is active on `vp`, using the same override/pan-hold cleanup
-    // as wireToolKey. No-op when already active (setCurrentTool also early-returns),
-    // so it never disturbs the current object/highlighter sub-mode. Used by the
-    // object-mode and highlighter shortcuts below so they auto-switch to their
-    // tool instead of no-opping under a different tool.
+    // Ensure `tool` is active on `vp`. No-op when already active, and no-op
+    // while a hold key is down so a style/object shortcut cannot steal the tool.
     auto ensureTool = [](MainWindow* w, DocumentViewport* vp, ToolType tool) {
+        if (w->m_toolHoldActive) return;
         if (vp->currentTool() == tool) return;
-        if (w->m_panHoldActive) w->m_panHoldActive = false;
         if (w->m_toolOverrideViewport == vp) w->m_toolOverrideViewport = nullptr;
         vp->setCurrentTool(tool);  // emits toolChanged -> toolbar/subtoolbar refresh
     };
@@ -2174,6 +2171,7 @@ void MainWindow::setupManagedShortcuts()
     bindAction("tool.eraser");
     bindAction("tool.lasso");
     bindAction("tool.object_select");
+    bindAction("tool.pan");
     bindAction("tool.cycle_color");
     bindAction("tool.cycle_thickness");
     bindAction("highlighter.style_none");
@@ -2258,55 +2256,134 @@ void MainWindow::setupManagedShortcuts()
     }
 #endif
 
-    // ===== Pan tool (H, hold-to-activate) =====
-    //
-    // tool.pan is the only registry id that's NOT wired via wireQActionDispatchers:
-    // the H key is hold-to-activate (release switches back to the previous
-    // tool), which the QShortcut/QAction model can't express. The hold/release
-    // semantics live in MainWindow::eventFilter; this block reads tool.pan's
-    // key code once into m_panHoldKey, and onShortcutChanged() keeps it
-    // updated after user remaps via Settings.
-    {
-        QKeySequence panSeq = sm->keySequenceForAction("tool.pan");
-        if (!panSeq.isEmpty()) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-            m_panHoldKey = panSeq[0].key();
-#else
-            m_panHoldKey = panSeq[0] & ~Qt::KeyboardModifierMask;
-#endif
-        }
-    }
-
-    // Pick up live shortcut remaps via Settings. Registry QActions update
-    // themselves through ShortcutManager's internal connect; this slot only
-    // handles the two non-registry cases above (m_panHoldKey, m_escapeShortcut).
+    // Hold-mode tool keys are not QAction shortcuts (see ShortcutManager::
+    // syncActionShortcut). Press/release lives in eventFilter.
+    // Registry QActions update themselves; this slot only refreshes the
+    // escape shortcut, which is a per-window QShortcut.
     connect(sm, &ShortcutManager::shortcutChanged,
             this, &MainWindow::onShortcutChanged);
 }
 
 void MainWindow::onShortcutChanged(const QString& actionId, const QString& newShortcut)
 {
-    // Registry QActions (the bulk of our shortcuts) keep themselves in sync
-    // via ShortcutManager's internal wiring. This slot only handles the two
-    // non-registry cases set up in setupManagedShortcuts():
-    //   - tool.pan        -> m_panHoldKey (hold-to-activate, no QShortcut)
-    //   - navigation.escape -> m_escapeShortcut (per-window QShortcut)
-    if (actionId == QLatin1String("tool.pan")) {
-        QKeySequence seq(newShortcut);
-        if (seq.isEmpty()) {
-            m_panHoldKey = 0;
-        } else {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-            m_panHoldKey = seq[0].key();
-#else
-            m_panHoldKey = seq[0] & ~Qt::KeyboardModifierMask;
-#endif
-        }
-        return;
-    }
+    // Registry QActions keep themselves in sync. Hold-mode keys are matched
+    // live in eventFilter. This slot only refreshes the escape shortcut.
     if (actionId == QLatin1String("navigation.escape") && m_escapeShortcut) {
         m_escapeShortcut->setKey(QKeySequence(newShortcut));
     }
+}
+
+namespace {
+
+/**
+ * @brief Whether keyboard focus is in a text editor.
+ *
+ * Line edits, text edits, and the text-box format bar. A hold must not
+ * start there, and the key must still type.
+ */
+bool toolHoldTextFocused()
+{
+    QWidget* focused = QApplication::focusWidget();
+    if (!focused) {
+        return false;
+    }
+    if (qobject_cast<QLineEdit*>(focused) || qobject_cast<QTextEdit*>(focused)
+        || qobject_cast<QPlainTextEdit*>(focused)) {
+        return true;
+    }
+    for (QWidget* widget = focused; widget; widget = widget->parentWidget()) {
+        if (widget->objectName() == QLatin1String("textBoxFormatBar")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Map a tool-switch action id to its ToolType.
+ * @param actionId Registry id, e.g. "tool.eraser".
+ * @param ok Set false when @p actionId is not a tool-switch action.
+ */
+ToolType toolTypeForAction(const QString& actionId, bool* ok)
+{
+    *ok = true;
+    if (actionId == QLatin1String("tool.pen")) return ToolType::Pen;
+    if (actionId == QLatin1String("tool.marker")) return ToolType::Marker;
+    if (actionId == QLatin1String("tool.eraser")) return ToolType::Eraser;
+    if (actionId == QLatin1String("tool.lasso")) return ToolType::Lasso;
+    if (actionId == QLatin1String("tool.highlighter")) return ToolType::Highlighter;
+    if (actionId == QLatin1String("tool.object_select")) return ToolType::ObjectSelect;
+    if (actionId == QLatin1String("tool.pan")) return ToolType::Pan;
+    *ok = false;
+    return ToolType::Pen;
+}
+
+} // namespace
+
+void MainWindow::releaseToolHold()
+{
+    if (!m_toolHoldActive) {
+        return;
+    }
+    if (auto* vp = currentViewport()) {
+        vp->setCurrentTool(m_toolBeforeHold);
+    }
+    m_toolHoldActive = false;
+    m_toolHoldKey = 0;
+}
+
+bool MainWindow::handleToolHoldKey(QKeyEvent* event, bool pressed)
+{
+    if (!event) {
+        return false;
+    }
+    // The shortcut editor must see the key, including one that is already a hold.
+    QWidget* focused = QApplication::focusWidget();
+    if (focused && focused->inherits("KeyCaptureDialog")) {
+        return false;
+    }
+    auto* sm = ShortcutManager::instance();
+    const QString actionId = sm->toolActionForKey(event->key(), event->modifiers());
+    const bool isToolKey = !actionId.isEmpty();
+    const bool isHoldAction = isToolKey
+        && sm->activationForAction(actionId) == ShortcutManager::Activation::Hold;
+
+    if (event->isAutoRepeat()) {
+        if (!m_toolHoldActive) {
+            return false;
+        }
+        return event->key() == m_toolHoldKey || isToolKey;
+    }
+
+    if (pressed) {
+        if (m_toolHoldActive) {
+            return isToolKey;
+        }
+        if (!isHoldAction || toolHoldTextFocused()) {
+            return false;
+        }
+        bool known = false;
+        const ToolType tool = toolTypeForAction(actionId, &known);
+        if (!known) {
+            return false;
+        }
+        if (auto* vp = currentViewport()) {
+            if (vp->currentTool() != tool) {
+                m_toolBeforeHold = vp->currentTool();
+                m_toolHoldActive = true;
+                m_toolHoldKey = event->key();
+                vp->setCurrentTool(tool);
+            }
+        }
+        return true;
+    }
+
+    if (m_toolHoldActive && event->key() == m_toolHoldKey) {
+        releaseToolHold();
+        return true;
+    }
+
+    return m_toolHoldActive && isToolKey;
 }
 
 MainWindow::~MainWindow() {
@@ -5119,39 +5196,15 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
     }
 #endif
 
-    // Pan tool hold: cancel if application loses focus (KeyRelease won't arrive)
-    if (m_panHoldActive && event->type() == QEvent::ApplicationDeactivate) {
-        if (auto* vp = currentViewport()) {
-            vp->setCurrentTool(m_toolBeforePanHold);
-        }
-        m_panHoldActive = false;
+    // Tool hold: cancel if application loses focus (KeyRelease won't arrive)
+    if (m_toolHoldActive && event->type() == QEvent::ApplicationDeactivate) {
+        releaseToolHold();
     }
-    
-    // Pan tool hold: H key spring-loaded activation
-    // setCurrentTool emits toolChanged which updates the toolbar automatically
-    if (m_panHoldKey && event->type() == QEvent::KeyPress) {
+
+    if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
         auto* ke = static_cast<QKeyEvent*>(event);
-        if (ke->key() == m_panHoldKey && !ke->isAutoRepeat() && !m_panHoldActive) {
-            QWidget* focused = QApplication::focusWidget();
-            if (!qobject_cast<QLineEdit*>(focused) && !qobject_cast<QTextEdit*>(focused)
-                && !qobject_cast<QPlainTextEdit*>(focused)) {
-                if (auto* vp = currentViewport()) {
-                    if (vp->currentTool() != ToolType::Pan) {
-                        m_toolBeforePanHold = vp->currentTool();
-                        m_panHoldActive = true;
-                        vp->setCurrentTool(ToolType::Pan);
-                    }
-                }
-            }
-        }
-    }
-    if (m_panHoldActive && event->type() == QEvent::KeyRelease) {
-        auto* ke = static_cast<QKeyEvent*>(event);
-        if (ke->key() == m_panHoldKey && !ke->isAutoRepeat()) {
-            if (auto* vp = currentViewport()) {
-                vp->setCurrentTool(m_toolBeforePanHold);
-            }
-            m_panHoldActive = false;
+        if (handleToolHoldKey(ke, event->type() == QEvent::KeyPress)) {
+            return true;
         }
     }
 
@@ -5939,6 +5992,8 @@ void MainWindow::connectSubToolbarSignals()
 
 void MainWindow::applyToolOverrideForClipboard(ToolType requiredTool)
 {
+    if (m_toolHoldActive)
+        return;
     if (!m_splitViewManager || !m_splitViewManager->isSplit())
         return;
 
@@ -5966,6 +6021,8 @@ void MainWindow::applyToolOverrideForClipboard(ToolType requiredTool)
 
 void MainWindow::clearToolOverride(bool revert)
 {
+    if (m_toolHoldActive)
+        return;
     if (!m_toolOverrideViewport)
         return;
 

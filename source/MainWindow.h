@@ -843,10 +843,26 @@ private:
     QMetaObject::Connection m_ocrConvertConn;          // For convertOcrTextRequested
     QMetaObject::Connection m_textBoxLayoutConn;       // Text-box commit → search invalidation
     
-    // Pan tool hold (H key spring-loaded activation)
-    bool m_panHoldActive = false;
-    ToolType m_toolBeforePanHold = ToolType::Pen;
-    int m_panHoldKey = 0;
+    // Tool-shortcut hold. One at a time: while active, other tool changes no-op.
+    bool m_toolHoldActive = false;
+    ToolType m_toolBeforeHold = ToolType::Pen;
+    int m_toolHoldKey = 0;
+
+    /**
+     * @brief Press or release a tool-hold shortcut.
+     *
+     * While a hold is active, other tool-switch keys are eaten. Text focus
+     * and the shortcut capture dialog do not start a hold.
+     * @param event Key that was pressed or released.
+     * @param pressed True on key press, false on release.
+     * @return True if the event was consumed.
+     */
+    bool handleToolHoldKey(QKeyEvent* event, bool pressed);
+
+    /**
+     * @brief Restore the tool saved when the current hold began.
+     */
+    void releaseToolHold();
     
     // Event filter for scrollbar hover detection
     bool eventFilter(QObject *obj, QEvent *event) override;

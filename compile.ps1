@@ -580,10 +580,11 @@ if (Test-Path $ntlddExe) {
     $bashExe = "$msys2Root\usr\bin\bash.exe"
     if (Test-Path $bashExe) {
         $lddScript = @"
-export PATH="/$toolchain/bin:`$PATH"
+export PATH="/usr/bin:/$toolchain/bin:`$PATH"
 ldd speedynote.exe 2>/dev/null | grep "/$toolchain/" | awk '{print `$3}'
 "@
-        $lddOutput = & $bashExe -lc $lddScript 2>$null
+        # -c keeps this build directory. -l starts in $HOME, so ldd never sees the exe.
+        $lddOutput = & $bashExe -c $lddScript 2>$null
         
         foreach ($dllPath in $lddOutput) {
             if ($dllPath -and $dllPath.Trim()) {

@@ -361,10 +361,9 @@ void MacMenuBar::populateToolsMenu()
         if (auto* a = sm->action(id)) menu->addAction(a);
     };
 
-    // Direct items: tool selection. tool.pan (H, hold-to-activate) is
-    // intentionally omitted per QA Q4.5 — it is not menu-friendly. The
-    // existing event-filter path at MainWindow::eventFilter handles the
-    // hold-and-release semantics.
+    // Direct items: tool selection. tool.pan is omitted per QA Q4.5 — a
+    // hold-to-pan key is not menu-friendly. Hold/tap for every tool key,
+    // including pan, is handled in MainWindow::eventFilter.
     add(m_toolsMenu, "tool.pen");
     add(m_toolsMenu, "tool.marker");
     add(m_toolsMenu, "tool.highlighter");

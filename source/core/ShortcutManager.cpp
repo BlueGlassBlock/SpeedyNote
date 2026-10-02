@@ -91,9 +91,10 @@ ShortcutManager::ShortcutManager(QObject* parent)
     // reflect the new binding immediately.
     connect(this, &ShortcutManager::shortcutChanged,
             this, [this](const QString& actionId, const QString& newShortcut) {
+        Q_UNUSED(newShortcut);
         auto it = m_shortcuts.find(actionId);
         if (it != m_shortcuts.end() && it.value().action) {
-            it.value().action->setShortcut(QKeySequence(newShortcut));
+            syncActionShortcut(actionId);
         }
     });
 
@@ -144,7 +145,7 @@ void ShortcutManager::registerDefaults()
     registerAction("tool.highlighter", "T", tr("Text Highlighter Tool"), tr("Tools"));
     registerAction("tool.marker", "M", tr("Marker Tool"), tr("Tools"));
     registerAction("tool.object_select", "V", tr("Object Select Tool"), tr("Tools"));
-    registerAction("tool.pan", "H", tr("Pan Tool (Hold)"), tr("Tools"));
+    registerAction("tool.pan", "H", tr("Pan Tool"), tr("Tools"));
     // Cycle the active tool's color / thickness presets (single-key, remappable).
     // Color applies to Pen/Marker/Highlighter; thickness to Pen/Marker/Eraser.
     registerAction("tool.cycle_color", "C", tr("Cycle Tool Color"), tr("Tools"));
@@ -453,11 +454,15 @@ void ShortcutManager::clearUserShortcut(const QString& actionId)
 void ShortcutManager::resetAllToDefaults()
 {
     QStringList changedActions;
+    QStringList changedActivations;
 
     // Collect all actions that have overrides
     for (auto it = m_shortcuts.begin(); it != m_shortcuts.end(); ++it) {
         if (!it.value().userShortcut.isEmpty()) {
             changedActions.append(it.key());
+        }
+        if (it.value().activationOverridden) {
+            changedActivations.append(it.key());
         }
     }
 
@@ -467,10 +472,19 @@ void ShortcutManager::resetAllToDefaults()
     for (const QString& actionId : changedActions) {
         m_shortcuts[actionId].userShortcut.clear();
     }
+    for (const QString& actionId : changedActivations) {
+        m_shortcuts[actionId].activationOverridden = false;
+    }
     for (const QString& actionId : changedActions) {
         // Emit the resolved shortcut so listeners get the correct platform
         // default (macosDefault on macOS, defaultShortcut elsewhere).
         emit shortcutChanged(actionId, shortcutForAction(actionId));
+    }
+    // Activation-only resets still have to drop a Hold QAction shortcut.
+    for (const QString& actionId : changedActivations) {
+        if (!changedActions.contains(actionId)) {
+            syncActionShortcut(actionId);
+        }
     }
 
 #ifdef SPEEDYNOTE_DEBUG
@@ -563,6 +577,30 @@ void ShortcutManager::loadUserShortcuts()
         }
     }
     
+    // Tap/hold overrides. Unknown ids and non-tool actions are ignored so a
+    // hand-edited file cannot turn Undo into a hold.
+    const QJsonObject activation = root.value("activation").toObject();
+    for (auto it = activation.begin(); it != activation.end(); ++it) {
+        const QString actionId = it.key();
+        const QString mode = it.value().toString();
+        if (!supportsActivation(actionId) || !m_shortcuts.contains(actionId)) {
+            continue;
+        }
+        if (mode != QLatin1String("hold") && mode != QLatin1String("trigger")) {
+            continue;
+        }
+        ShortcutEntry& entry = m_shortcuts[actionId];
+        const Activation chosen = (mode == QLatin1String("hold"))
+                                      ? Activation::Hold
+                                      : Activation::Trigger;
+        if (chosen == defaultActivationForAction(actionId)) {
+            entry.activationOverridden = false;
+            continue;
+        }
+        entry.activationOverridden = true;
+        entry.userActivation = chosen;
+    }
+
 #ifdef SPEEDYNOTE_DEBUG
     qDebug() << "[ShortcutManager] Loaded" << loadedCount << "shortcut overrides";
 #endif
@@ -571,12 +609,20 @@ void ShortcutManager::loadUserShortcuts()
 void ShortcutManager::saveUserShortcuts()
 {
     QJsonObject overrides;
+    QJsonObject activation;
     
-    // Collect all overrides
+    // Collect all overrides. Activation is a sibling object so old files
+    // whose overrides are plain strings still load.
     for (auto it = m_shortcuts.constBegin(); it != m_shortcuts.constEnd(); ++it) {
         const ShortcutEntry& entry = it.value();
         if (!entry.userShortcut.isEmpty()) {
             overrides.insert(it.key(), entry.userShortcut);
+        }
+        if (entry.activationOverridden) {
+            activation.insert(it.key(),
+                              entry.userActivation == Activation::Hold
+                                  ? QStringLiteral("hold")
+                                  : QStringLiteral("trigger"));
         }
     }
     
@@ -584,6 +630,9 @@ void ShortcutManager::saveUserShortcuts()
     QJsonObject root;
     root.insert("version", 1);
     root.insert("overrides", overrides);
+    if (!activation.isEmpty()) {
+        root.insert("activation", activation);
+    }
     
     QJsonDocument doc(root);
     
@@ -716,6 +765,125 @@ QString ShortcutManager::categoryForAction(const QString& actionId) const
 }
 
 // ============================================================================
+// Tool shortcut activation
+// ============================================================================
+
+bool ShortcutManager::supportsActivation(const QString& actionId)
+{
+    return actionId == QLatin1String("tool.pen")
+        || actionId == QLatin1String("tool.marker")
+        || actionId == QLatin1String("tool.eraser")
+        || actionId == QLatin1String("tool.lasso")
+        || actionId == QLatin1String("tool.highlighter")
+        || actionId == QLatin1String("tool.object_select")
+        || actionId == QLatin1String("tool.pan");
+}
+
+ShortcutManager::Activation ShortcutManager::defaultActivationForAction(const QString& actionId)
+{
+    if (actionId == QLatin1String("tool.pan")) {
+        return Activation::Hold;
+    }
+    return Activation::Trigger;
+}
+
+ShortcutManager::Activation ShortcutManager::activationForAction(const QString& actionId) const
+{
+    if (!supportsActivation(actionId)) {
+        return Activation::Trigger;
+    }
+    auto it = m_shortcuts.constFind(actionId);
+    if (it == m_shortcuts.constEnd() || !it.value().activationOverridden) {
+        return defaultActivationForAction(actionId);
+    }
+    return it.value().userActivation;
+}
+
+bool ShortcutManager::isActivationOverridden(const QString& actionId) const
+{
+    auto it = m_shortcuts.constFind(actionId);
+    return it != m_shortcuts.constEnd() && it.value().activationOverridden;
+}
+
+void ShortcutManager::setActivation(const QString& actionId, Activation activation)
+{
+    if (!supportsActivation(actionId)) {
+        return;
+    }
+    auto it = m_shortcuts.find(actionId);
+    if (it == m_shortcuts.end()) {
+        return;
+    }
+    ShortcutEntry& entry = it.value();
+    const Activation previous = activationForAction(actionId);
+    if (activation == defaultActivationForAction(actionId)) {
+        entry.activationOverridden = false;
+    } else {
+        entry.activationOverridden = true;
+        entry.userActivation = activation;
+    }
+    if (previous != activationForAction(actionId)) {
+        syncActionShortcut(actionId);
+    }
+}
+
+QString ShortcutManager::toolActionForKey(int key, Qt::KeyboardModifiers modifiers) const
+{
+    static const char* kIds[] = {
+        "tool.pen",
+        "tool.marker",
+        "tool.eraser",
+        "tool.lasso",
+        "tool.highlighter",
+        "tool.object_select",
+        "tool.pan",
+    };
+    for (const char* id : kIds) {
+        const QString actionId = QString::fromLatin1(id);
+        if (shortcutMatchesKey(shortcutForAction(actionId), key, modifiers)) {
+            return actionId;
+        }
+    }
+    return QString();
+}
+
+bool ShortcutManager::shortcutMatchesKey(const QString& shortcut, int key,
+                                        Qt::KeyboardModifiers modifiers)
+{
+    const QKeySequence seq(shortcut);
+    if (seq.count() != 1) {
+        return false;
+    }
+    const Qt::KeyboardModifiers got = modifiers & ~Qt::KeypadModifier;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QKeyCombination combo = seq[0];
+    return int(combo.key()) == key && combo.keyboardModifiers() == got;
+#else
+    const int combined = seq[0];
+    const int wantedKey = combined & ~int(Qt::KeyboardModifierMask);
+    const auto wantedMods = Qt::KeyboardModifiers(combined & int(Qt::KeyboardModifierMask));
+    return wantedKey == key && wantedMods == got;
+#endif
+}
+
+void ShortcutManager::syncActionShortcut(const QString& actionId)
+{
+    auto it = m_shortcuts.find(actionId);
+    if (it == m_shortcuts.end() || !it.value().action) {
+        return;
+    }
+    // Hold is handled in MainWindow::eventFilter. Leaving the QAction shortcut
+    // in place would swallow the key before that, and would also eat the
+    // character in text fields.
+    if (supportsActivation(actionId)
+        && activationForAction(actionId) == Activation::Hold) {
+        it.value().action->setShortcut(QKeySequence());
+        return;
+    }
+    it.value().action->setShortcut(QKeySequence(shortcutForAction(actionId)));
+}
+
+// ============================================================================
 // QAction Registry (MAC.1)
 // ============================================================================
 
@@ -730,8 +898,8 @@ QAction* ShortcutManager::action(const QString& actionId)
     ShortcutEntry& entry = it.value();
     if (!entry.action) {
         entry.action = new QAction(entry.displayName, this);
-        entry.action->setShortcut(QKeySequence(shortcutForAction(actionId)));
         entry.action->setShortcutContext(entry.context);
+        syncActionShortcut(actionId);
         entry.action->setObjectName(actionId);  // for debugging / accessibility
         // Apply current scope state in case the scope was set before this
         // action was first queried.
@@ -749,10 +917,8 @@ void ShortcutManager::setMacosDefault(const QString& actionId, const QString& sh
     }
     it.value().macosDefault = shortcut;
     // If a QAction already exists, refresh its shortcut: on macOS the new
-    // macosDefault may now be the effective binding.
-    if (it.value().action) {
-        it.value().action->setShortcut(QKeySequence(shortcutForAction(actionId)));
-    }
+    // macosDefault may now be the effective binding. Hold actions stay unbound.
+    syncActionShortcut(actionId);
 }
 
 void ShortcutManager::setActionContext(const QString& actionId, Qt::ShortcutContext ctx)

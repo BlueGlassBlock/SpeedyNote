@@ -567,6 +567,7 @@ static void applyAndroidFonts(QApplication& app)
 // Test includes (desktop debug builds only)
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS) && defined(SPEEDYNOTE_DEBUG)
 #include "core/PageTests.h"
+#include "core/ShortcutManagerTests.h"
 #include "core/DocumentTests.h"
 #include "core/NotebookLibraryTests.h"
 #include "core/SandboxPdfOwnershipTests.h"
@@ -950,6 +951,8 @@ static int runTests(const QString& testType)
 
     if (testType == "page") {
         success = PageTests::runAllTests();
+    } else if (testType == "shortcuts") {
+        success = ShortcutManagerTests::runAllTests();
     } else if (testType == "document") {
         success = DocumentTests::runAllTests();
     } else if (testType == "notebooklibrary") {
@@ -1315,6 +1318,8 @@ int main(int argc, char* argv[])
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS) && defined(SPEEDYNOTE_DEBUG)
         else if (arg == "--test-page") {
             testToRun = "page";
+        } else if (arg == "--test-shortcuts") {
+            testToRun = "shortcuts";
         } else if (arg == "--test-document") {
             testToRun = "document";
         } else if (arg == "--test-notebooklibrary") {

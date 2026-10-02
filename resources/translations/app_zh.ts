@@ -1135,6 +1135,21 @@ NOTE: On Android, imported notebooks are automatically added to the library.
         <translation type="unfinished">默认值</translation>
     </message>
     <message>
+        <location filename="../../source/ControlPanelDialog.cpp" line="1206"/>
+        <source>Activation</source>
+        <translation type="unfinished">激活条件</translation>
+    </message>
+    <message>
+        <location filename="../../source/ControlPanelDialog.cpp" line="1350"/>
+        <source>Tap</source>
+        <translation type="unfinished">点按</translation>
+    </message>
+    <message>
+        <location filename="../../source/ControlPanelDialog.cpp" line="1351"/>
+        <source>Hold</source>
+        <translation type="unfinished">按住</translation>
+    </message>
+    <message>
         <location filename="../../source/ControlPanelDialog.cpp" line="1221"/>
         <source>Edit</source>
         <translation type="unfinished">编辑</translation>
@@ -5008,8 +5023,8 @@ Try a different search term.</source>
     </message>
     <message>
         <location filename="../../source/core/ShortcutManager.cpp" line="147"/>
-        <source>Pan Tool (Hold)</source>
-        <translation type="unfinished">手形工具 (按住)</translation>
+        <source>Pan Tool</source>
+        <translation type="unfinished">手形工具</translation>
     </message>
     <message>
         <location filename="../../source/core/ShortcutManager.cpp" line="150"/>
