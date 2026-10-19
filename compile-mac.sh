@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+bash "$(cd "$(dirname "$0")" && pwd)/android/ensure-submodules.sh"
 
 # SpeedyNote macOS Compilation and Packaging Script
 # Supports both Intel (x86_64) and Apple Silicon (arm64)

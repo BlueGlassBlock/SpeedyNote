@@ -1,0 +1,4 @@
+# The Android container strips CR from these scripts. Force LF so
+# core.autocrlf does not mark that as a modification.
+android/*.sh text eol=lf
+.gitmodules text eol=lf

@@ -1,6 +1,7 @@
 
 #!/bin/bash
 set -e
+bash "$(cd "$(dirname "$0")" && pwd)/android/ensure-submodules.sh"
 
 # SpeedyNote Linux Compilation Script
 

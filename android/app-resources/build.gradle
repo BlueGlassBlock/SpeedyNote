@@ -22,6 +22,8 @@ dependencies {
     //noinspection GradleDependency
     implementation 'androidx.core:core:1.16.0'
     implementation 'com.google.mlkit:digital-ink-recognition:19.0.0'
+    // Vendored S Pen Remote library. Its Kotlin stays in thirdparty.
+    implementation project(':s-pen-remote')
 }
 
 // Kotlin 1.8+ merged jdk7/jdk8 into kotlin-stdlib; force a single version

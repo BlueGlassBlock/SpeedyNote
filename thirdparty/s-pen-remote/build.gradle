@@ -1,0 +1,53 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        //noinspection AndroidGradlePluginVersion
+        classpath 'com.android.tools.build:gradle:8.8.0'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.22'
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+// Sources stay in the thirdparty/s-pen-remote-open-sdk submodule.
+// This file only adapts that library to this app's Gradle plugin.
+def spenSrc = '../s-pen-remote-open-sdk/lib/src/main'
+
+android {
+    namespace 'io.github.davidallison.penremote'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 24
+    }
+
+    buildFeatures {
+        aidl true
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = ["${spenSrc}/java"]
+            aidl.srcDirs = ["${spenSrc}/aidl"]
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}

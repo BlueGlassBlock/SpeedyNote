@@ -19,6 +19,9 @@
     <!-- Notifications for export/import completion (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- S Pen side button. The library does not merge this permission. -->
+    <uses-permission android:name="com.samsung.android.sdk.penremote.BIND_SPEN_REMOTE"/>
+
     <!-- Hardware features -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="true"/>
     <uses-feature android:name="android.hardware.touchscreen.multitouch" android:required="false"/>

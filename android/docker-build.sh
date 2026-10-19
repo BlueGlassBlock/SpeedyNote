@@ -3,6 +3,7 @@
 # Build the SpeedyNote Android Docker image
 # =============================================================================
 set -e
+bash "$(cd "$(dirname "$0")" && pwd)/ensure-submodules.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMAGE_NAME="speedynote-android"

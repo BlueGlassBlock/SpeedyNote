@@ -1088,6 +1088,7 @@ set(ANDROID_PLATFORM_SOURCES "")
 if(ANDROID)
     set(ANDROID_PLATFORM_SOURCES
         source/android/PdfPickerAndroid.cpp
+        source/android/SPenRemoteAndroid.cpp
         source/android/AndroidShareHelper.cpp
         source/ui/dialogs/SaveDocumentDialog.cpp  # BUG-A002: Touch-friendly save dialog
     )

@@ -1,0 +1,3 @@
+[submodule "thirdparty/s-pen-remote-open-sdk"]
+	path = thirdparty/s-pen-remote-open-sdk
+	url = https://github.com/david-allison/S-Pen-Remote-Open-SDK.git

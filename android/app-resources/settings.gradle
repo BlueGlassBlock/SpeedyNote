@@ -1,0 +1,21 @@
+// Gradle runs from a build directory inside this repo. Walk parents only
+// until the repo root, so a thirdparty directory above the repo cannot match.
+def search = settingsDir
+File spenDir = null
+for (int i = 0; i < 4 && search != null; i++) {
+    def candidate = new File(search, "thirdparty/s-pen-remote")
+    if (new File(candidate, "build.gradle").isFile()) {
+        spenDir = candidate
+        break
+    }
+    if (new File(search, ".git").exists()) {
+        break
+    }
+    search = search.parentFile
+}
+if (spenDir == null) {
+    throw new GradleException("thirdparty/s-pen-remote not found above " + settingsDir)
+}
+
+include ':s-pen-remote'
+project(':s-pen-remote').projectDir = spenDir

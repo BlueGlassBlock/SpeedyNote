@@ -59,6 +59,18 @@ public class SpeedyNoteActivity extends QtActivity {
         super.onCreate(savedInstanceState);
         sInstance = this;
     }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        SPenRemoteBridge.onResume(this);
+    }
+
+    @Override
+    protected void onPause() {
+        SPenRemoteBridge.onPause(this);
+        super.onPause();
+    }
     
     @Override
     protected void onDestroy() {
@@ -143,7 +155,38 @@ public class SpeedyNoteActivity extends QtActivity {
      * - Eraser check uses early-exit loop
      */
     @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        trackSpenSideButton(event);
+        return super.dispatchGenericMotionEvent(event);
+    }
+
+    /**
+     * S Pen side button on an EMR digitizer. The button bit arrives on hover
+     * and on the pen down/move/up events. A cancel must release it, or a
+     * hold shortcut stays down.
+     */
+    private void trackSpenSideButton(MotionEvent event) {
+        if (event.getPointerCount() <= 0) {
+            return;
+        }
+        int toolType = event.getToolType(0);
+        if (toolType != MotionEvent.TOOL_TYPE_STYLUS
+                && toolType != MotionEvent.TOOL_TYPE_ERASER) {
+            return;
+        }
+        // Hover-exit while the button is still down is the hover-to-touch
+        // transition on this tablet, not a release. Follow the button bit.
+        // Cancel is the one case that must drop a held button.
+        if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            SPenRemoteBridge.onDigitizerButtons(0);
+            return;
+        }
+        SPenRemoteBridge.onDigitizerButtons(event.getButtonState());
+    }
+
+    @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
+        trackSpenSideButton(event);
         // Detect eraser tool type before Qt processes the event
         // Only check for stylus events (optimization: skip finger events)
         int toolType = event.getToolType(0);

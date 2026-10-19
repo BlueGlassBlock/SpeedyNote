@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+bash "$(cd "$(dirname "$0")" && pwd)/android/ensure-submodules.sh"
 
 # SpeedyNote Multi-Distribution Packaging Script
 # This script automates the process of creating packages for multiple Linux distributions
